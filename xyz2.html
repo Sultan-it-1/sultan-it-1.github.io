@@ -26,6 +26,27 @@ table{width:100%;margin-top:10px;border-collapse:collapse;font-size:12px}
 th,td{border:1px solid #444;padding:4px;text-align:center;color:#fff}
 th{background-color:#222}
 .miniCanvas{width:80px;height:30px;background:#000;border:1px solid #444;display:inline-block}
+/* إضافة أسفل CSS الموجود */
+.container{width:100%;max-width:420px;padding:10px}
+
+/* جعل الجدول Scrollable على الموبايل */
+#readingsTable{
+  display:block;
+  width:100%;
+  overflow-x:auto;
+}
+
+/* تصغير حجم الـ miniCanvas على الشاشات الصغيرة */
+@media (max-width: 400px){
+  .miniCanvas{
+    width:50px;
+    height:20px;
+  }
+  th,td{
+    font-size:10px;
+    padding:2px 4px;
+  }
+}
 </style>
 </head>
 <body>
