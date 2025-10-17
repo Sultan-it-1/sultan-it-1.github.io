@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ar">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Gyro Visualizer — Responsive + Threshold</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#111;--card:#1b1b1b;--muted:#9aa0a6;--accent:rgba(255,255,255,0.06)}
+html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,'Noto Sans',Tahoma,'Helvetica Neue',Arial}
+body{background:linear-gradient(#0f0f10,#0b0b0b);color:#e6eef3;display:flex;flex-direction:column;align-items:center;padding:10px}
+.container{width:100%;max-width:420px}
+header{text-align:center;margin-bottom:6px}
+h1{font-size:16px;margin:6px 0 2px}
+.coords{color:var(--muted);font-size:13px}
+.card{background:var(--card);border-radius:12px;padding:12px;margin-top:10px;box-shadow:0 6px 20px rgba(0,0,0,0.6)}
+canvas{width:100% !important;height:220px !important}
+.legend{display:flex;gap:10px;justify-content:center;margin-top:6px}
+.legend div{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:13px}
+.dot{width:18px;height:10px;border-radius:4px;display:inline-block}
+.controls{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+button{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);padding:8px 10px;border-radius:8px;cursor:pointer}
+.footer{color:rgba(255,255,255,0.08);text-align:center;padding:20px 0;font-size:12px}
+.warning{color:#ffb86b;font-size:13px;text-align:center;margin-top:8px}
+table{width:100%;margin-top:10px;border-collapse:collapse;font-size:12px;display:block;overflow-x:auto}
+th,td{border:1px solid #444;padding:4px;text-align:center;color:#fff}
+th{background-color:#222}
+.miniCanvas{width:80px;height:30px;background:#000;border:1px solid #444;display:inline-block}
+/* Responsive للجوال */
+@media(max-width:400px){
+  .miniCanvas{width:50px;height:20px}
+  th,td{font-size:10px;padding:2px 4px}
+}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+<h1>مخطط الاهتزاز + قراءات بارزة</h1>
+<div id="coords" class="coords">X: 0.0000, Y: 0.0000, Z: 0.0000</div>
+</header>
+
+<div class="card">
+<canvas id="chart"></canvas>
+<div class="legend">
+<div><span class="dot" style="background:#ff3b30"></span> X</div>
+<div><span class="dot" style="background:#34c759"></span> Y</div>
+<div><span class="dot" style="background:#007aff"></span> Z</div>
+</div>
+
+<div class="controls">
+<button id="btn-perm">طلب صلاحية المستشعر</button>
+<button id="btn-start">ابدأ</button>
+<button id="btn-stop">ايقاف</button>
+</div>
+
+<div id="status" class="warning">اضغط "طلب صلاحية المستشعر" على أجهزة iOS ثم ابدأ.</div>
+
+<label style="font-size:12px;margin-top:8px;display:block;">Threshold (حساسية الحركة): <span id="thVal">0.3</span></label>
+<input type="range" id="thRange" min="0" max="2" step="0.05" value="0.3" style="width:100%;margin-bottom:10px;">
+
+<table id="readingsTable">
+<thead>
+<tr>
+<th>#</th>
+<th>Peak X</th><th>Peak Y</th><th>Peak Z</th>
+<th>Min X</th><th>Min Y</th><th>Min Z</th>
+<th>Avg X</th><th>Avg Y</th><th>Avg Z</th>
+<th>RMS X</th><th>RMS Y</th><th>RMS Z</th>
+<th>Timestamp</th>
+<th>Wave X</th><th>Wave Y</th><th>Wave Z</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<div class="footer">Developed by Sultan — Live Gyro Visualizer</div>
+</div>
+</div>
+
+<script>
+const ctx = document.getElementById('chart');
+const maxPoints = 100;
+let running=false;
+let chart;
+let buffer={x:[],y:[],z:[]};
+let readingCounter=0;
+let chartUpdateLoop;
+let THRESHOLD = parseFloat(document.getElementById('thRange').value);
+
+document.getElementById('thRange').addEventListener('input', (e)=>{
+  THRESHOLD = parseFloat(e.target.value);
+  document.getElementById('thVal').textContent = THRESHOLD.toFixed(2);
+});
+
+function createChart(){
+const data={labels:Array(maxPoints).fill(''),
+datasets:[
+{label:'X',data:Array(maxPoints).fill(0),borderColor:'#ff3b30',tension:0.2,pointRadius:0,borderWidth:2},
+{label:'Y',data:Array(maxPoints).fill(0),borderColor:'#34c759',tension:0.2,pointRadius:0,borderWidth:2},
+{label:'Z',data:Array(maxPoints).fill(0),borderColor:'#007aff',tension:0.2,pointRadius:0,borderWidth:2}
+]};
+chart=new Chart(ctx,{type:'line',data,options:{animation:false,responsive:true,maintainAspectRatio:false,scales:{x:{display:false},y:{min:-2,max:2,grid:{color:'rgba(255,255,255,0.03)'}}},plugins:{legend:{display:false}}}});
+}
+
+function pushValue(x,y,z){
+buffer.x.push(x); if(buffer.x.length>maxPoints) buffer.x.shift();
+buffer.y.push(y); if(buffer.y.length>maxPoints) buffer.y.shift();
+buffer.z.push(z); if(buffer.z.length>maxPoints) buffer.z.shift();
+}
+
+function updateChartFromBuffer(){
+if(!chart) return;
+chart.data.datasets[0].data = buffer.x.slice(-maxPoints).concat(Array(Math.max(0,maxPoints-buffer.x.length)).fill(0));
+chart.data.datasets[1].data = buffer.y.slice(-maxPoints).concat(Array(Math.max(0,maxPoints-buffer.y.length)).fill(0));
+chart.data.datasets[2].data = buffer.z.slice(-maxPoints).concat(Array(Math.max(0,maxPoints-buffer.z.length)).fill(0));
+chart.update('none');
+}
+
+function handleMotion(e){
+let ax = e.acceleration?.x ?? e.accelerationIncludingGravity?.x ?? 0;
+let ay = e.acceleration?.y ?? e.accelerationIncludingGravity?.y ?? 0;
+let az = e.acceleration?.z ?? e.accelerationIncludingGravity?.z ?? 0;
+ax=ax||0; ay=ay||0; az=az||0;
+document.getElementById('coords').textContent = `X: ${ax.toFixed(4)}, Y: ${ay.toFixed(4)}, Z: ${az.toFixed(4)}`;
+pushValue(ax,ay,az);
+
+// سجل القراءة فقط إذا تجاوز Threshold
+if(Math.abs(ax)>=THRESHOLD || Math.abs(ay)>=THRESHOLD || Math.abs(az)>=THRESHOLD){
+  addReading(ax,ay,az);
+}
+}
+
+async function requestPermissionIOS(){
+if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
+try{
+const res = await DeviceMotionEvent.requestPermission();
+document.getElementById('status').textContent = res==='granted'?'تمت الموافقة. اضغط ابدأ لبدء القراءة.':'رفضت صلاحية المستشعر.';
+return res==='granted';
+}catch(err){document.getElementById('status').textContent='خطأ في طلب الصلاحية.';return false;}
+}else{
+document.getElementById('status').textContent='متصفحك قد لا يحتاج صلاحية صريحة. اضغط ابدأ.';
+return true;
+}
+}
+
+function startListening(){
+if(running) return;
+running=true;
+window.addEventListener('devicemotion',handleMotion);
+chartUpdateLoop=setInterval(updateChartFromBuffer,100);
+document.getElementById('status').textContent='الشارت يعمل — يقرأ حركة الجهاز.';
+}
+
+function stopListening(){
+if(!running) return;
+running=false;
+window.removeEventListener('devicemotion',handleMotion);
+clearInterval(chartUpdateLoop);
+document.getElementById('status').textContent='موقوف.';
+}
+
+function addReading(x,y,z){
+readingCounter++;
+const peakX=Math.abs(x), peakY=Math.abs(y), peakZ=Math.abs(z);
+const minX=-Math.abs(x), minY=-Math.abs(y), minZ=-Math.abs(z);
+const avgX=x.toFixed(3), avgY=y.toFixed(3), avgZ=z.toFixed(3);
+const rmsX=Math.sqrt(x*x).toFixed(3), rmsY=Math.sqrt(y*y).toFixed(3), rmsZ=Math.sqrt(z*z).toFixed(3);
+const timestamp=new Date().toLocaleTimeString();
+const tbody=document.querySelector('#readingsTable tbody');
+const row=document.createElement('tr');
+row.innerHTML=`<td>${readingCounter}</td>
+<td>${peakX}</td><td>${peakY}</td><td>${peakZ}</td>
+<td>${minX}</td><td>${minY}</td><td>${minZ}</td>
+<td>${avgX}</td><td>${avgY}</td><td>${avgZ}</td>
+<td>${rmsX}</td><td>${rmsY}</td><td>${rmsZ}</td>
+<td>${timestamp}</td>
+<td><canvas class="miniCanvas"></canvas></td>
+<td><canvas class="miniCanvas"></canvas></td>
+<td><canvas class="miniCanvas"></canvas></td>`;
+tbody.appendChild(row);
+
+// رسم Mini waveform لكل محور
+['x','y','z'].forEach((axis,i)=>{
+const miniCanvas=row.querySelectorAll('.miniCanvas')[i];
+miniCanvas.width=miniCanvas.offsetWidth;
+miniCanvas.height=miniCanvas.offsetHeight;
+const mctx=miniCanvas.getContext('2d');
+mctx.fillStyle='#000'; mctx.fillRect(0,0,miniCanvas.width,miniCanvas.height);
+mctx.strokeStyle=['#ff3b30','#34c759','#007aff'][i]; mctx.lineWidth=1;
+mctx.beginPath();
+const data=[x,y,z][i];
+const h=miniCanvas.height/2;
+mctx.moveTo(0,h); mctx.lineTo(miniCanvas.width,h - data*20);
+mctx.stroke();
+});
+}
+
+createChart();
+
+document.getElementById('btn-perm').addEventListener('click',async()=>{await requestPermissionIOS();});
+document.getElementById('btn-start').addEventListener('click',()=>{startListening();});
+document.getElementById('btn-stop').addEventListener('click',()=>{stopListening();});
+</script>
+</body>
+</html>
